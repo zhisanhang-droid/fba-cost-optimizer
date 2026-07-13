@@ -3,6 +3,10 @@ main = "src/worker.js"
 compatibility_date = "2026-07-12"
 compatibility_flags = ["nodejs_compat"]
 
+[[routes]]
+pattern = "mcp.zhang-hai.com"
+custom_domain = true
+
 [assets]
 directory = "./outputs"
 binding = "ASSETS"
