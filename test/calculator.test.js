@@ -16,3 +16,19 @@ test("backend-style small standard fee includes 3.5 percent surcharge", () => {
   assert.equal(result.fba.base_fee_usd, 3.42);
   assert.equal(result.fba.total_fba_fee_usd, 3.54);
 });
+test("under $10 price band uses the low-price 2026 rate", () => {
+  const result = calculateCost({ length: 7.36, width: 4.449, height: .75, weight: .201, price_band: "under_10" });
+  assert.equal(result.fba.base_fee_usd, 2.49);
+  assert.equal(result.fba.total_fba_fee_usd, 2.58);
+});
+test("sea freight rate is an external input", () => {
+  const result = calculateCost({ length: 7.36, width: 4.449, height: .75, weight: .201, sea_rate_per_kg: 1.47 });
+  assert.equal(result.sea_rate_per_kg_usd, 1.47);
+  assert.equal(result.sea_freight_usd, 0.13);
+});
+test("large oversize split placement uses the 42 to 50 lb rule", () => {
+  const item = classifyProduct({ length: 59, width: 10, height: 10, weight: 45 });
+  const result = calculateCost({ length: 59, width: 10, height: 10, weight: 45, placement: "split" });
+  assert.equal(item.tier, "large_oversize");
+  assert.equal(result.placement_fee_usd, 3.5);
+});
