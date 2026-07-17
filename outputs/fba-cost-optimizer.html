@@ -51,7 +51,7 @@
       transition:border-color .16s ease,box-shadow .16s ease;
     }
     input:focus,select:focus{border-color:var(--hover);box-shadow:0 0 0 3px rgba(122,91,54,.12)}
-    button{
+    #calc{
       width:100%;
       border:1px solid var(--accent);
       border-radius:8px;
@@ -64,11 +64,13 @@
       margin-top:4px;
       transition:background .16s ease,border-color .16s ease,opacity .16s ease;
     }
-    button:hover{background:#2f333a;border-color:#2f333a}
-    button:disabled{opacity:.62;cursor:wait}
+    #calc:hover{background:#2f333a;border-color:#2f333a}
+    #calc:disabled{opacity:.62;cursor:wait}
     code{font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:.88em;color:var(--ink);background:#f0ebe2;border:1px solid var(--line);border-radius:4px;padding:.12em .34em}
     .result{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-    .metric{border:1px solid var(--line);border-radius:8px;padding:12px;background:#fbfaf7}
+    .metric{display:block;width:100%;text-align:left;border:1px solid var(--line);border-radius:8px;padding:12px;background:#fbfaf7;color:inherit;font:inherit;cursor:pointer}
+    .metric:hover{border-color:var(--hover);background:#fff}
+    .metric:focus-visible{outline:3px solid rgba(122,91,54,.18);outline-offset:2px}
     .metric .label{color:var(--ink-soft);font-size:12px;font-weight:600}
     .metric .value{font-size:22px;font-weight:720;margin-top:2px;font-variant-numeric:tabular-nums}
     .metric.total{border-color:var(--accent);background:#f2efe8}
@@ -84,6 +86,20 @@
     .notice ul{margin:7px 0 0;padding-left:19px}
     .source{margin-top:18px;color:var(--ink-faint);font-size:12px}
     .source a{color:var(--hover);text-underline-offset:.25em}
+    .modal{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:20px;background:rgba(36,33,29,.34)}
+    .modal[hidden]{display:none}
+    .modal-panel{width:min(620px,100%);max-height:min(76vh,720px);overflow:auto;background:#fff;border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 24px 70px rgba(36,33,29,.25)}
+    .modal-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 18px;border-bottom:1px solid var(--line)}
+    .modal-head h3{margin:0;font-size:18px;font-weight:680}
+    .modal-close{width:32px;height:32px;border:1px solid var(--line-strong);border-radius:999px;background:#fff;color:var(--ink-soft);font-size:20px;line-height:1;cursor:pointer}
+    .modal-close:hover{border-color:var(--hover);color:var(--hover)}
+    .modal-body{padding:16px 18px 18px;color:var(--ink-soft)}
+    .modal-body h4{margin:16px 0 7px;color:var(--ink);font-size:14px}
+    .modal-body h4:first-child{margin-top:0}
+    .modal-body p{margin:0 0 8px}
+    .modal-body .formula{padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:#fbfaf7;color:var(--ink);font-weight:620}
+    .modal-body .rows{grid-template-columns:1fr}
+    .modal-body .row{padding:7px 0}
     @media(max-width:880px){main{padding:18px 14px 32px}.grid{grid-template-columns:1fr}.result{grid-template-columns:repeat(2,1fr)}.rows{grid-template-columns:1fr}}
     @media(max-width:520px){.form,.result{grid-template-columns:1fr}.intro h1{font-size:24px}.card{padding:15px}}
   </style>
@@ -108,16 +124,66 @@
   </div>
   <p class="source">费率来源：<a href="https://ccn1l53zhme9.feishu.cn/docx/B0B2dKd7ioYnUhxMW5icRBJynIh" target="_blank">《亚马逊 FBA 配送费+配置费用+海运费计算》</a>。特大件处理费及未列出的配置费，请以 Amazon 实际账单复核。</p>
 </main>
+<div id="explainModal" class="modal" hidden>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="explainTitle">
+    <div class="modal-head">
+      <h3 id="explainTitle">费用计算详情</h3>
+      <button class="modal-close" id="explainClose" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body" id="explainBody"></div>
+  </div>
+</div>
 <script>
 const $=id=>document.getElementById(id), money=n=>n==null?'待核对':'$'+Number(n).toFixed(2), num=id=>Number($(id).value);
 let rpcId=0;
+let explanations={};
 function priceBand(price){return price<10?'under_10':price<=50?'10_to_50':'over_50'}
 function args(){return {length:num('length'),width:num('width'),height:num('height'),weight:num('weight'),dimension_unit:$('dimension_unit').value,weight_unit:$('weight_unit').value,season:$('season').value,price_band:priceBand(num('price')),placement:$('placement').value,sea_freight_template_id:$('sea_freight_template_id').value}}
 function parseRpc(raw){try{return JSON.parse(raw)}catch{const lines=raw.split(/\r?\n/).filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trim()).filter(Boolean);return JSON.parse(lines.at(-1))}}
 async function invoke(name,arguments_){const response=await fetch('/mcp',{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream','MCP-Protocol-Version':'2025-03-26'},body:JSON.stringify({jsonrpc:'2.0',id:++rpcId,method:'tools/call',params:{name,arguments:arguments_}})});const rpc=parseRpc(await response.text());if(!response.ok||rpc.error)throw Error(rpc.error?.message||'MCP 调用失败');return JSON.parse(rpc.result.content[0].text)}
-function render(cost,optimization){const p=cost.product,t=cost.sea_template,seaUsesVolume=cost.sea_volumetric_weight_kg>cost.sea_actual_weight_kg;const warnings=optimization.warnings||[];$('output').innerHTML=`<div class="result"><div class="metric"><div class="label">海运费</div><div class="value">${money(cost.sea_freight_usd)}</div></div><div class="metric"><div class="label">配置费</div><div class="value">${money(cost.placement_fee_usd)}</div></div><div class="metric"><div class="label">FBA 配送费</div><div class="value">${money(cost.fba.total_fba_fee_usd)}</div></div><div class="metric total"><div class="label">三项合计</div><div class="value">${money(cost.total_usd)}</div></div></div><div class="detail"><span class="tier">${p.tier}</span><div class="rows"><div class="row"><span>实重</span><b>${cost.sea_actual_weight_kg.toFixed(2)} kg</b></div><div class="row"><span>体积重</span><b>${cost.sea_volumetric_weight_kg.toFixed(2)} kg</b></div><div class="row"><span>海运计费重</span><b>${cost.sea_chargeable_weight_kg.toFixed(2)} kg（${seaUsesVolume?'体积重':'实重'}）</b></div><div class="row"><span>体积重除数</span><b>${cost.sea_volume_divisor_cm3_per_kg} cm³/kg</b></div><div class="row"><span>海运模板</span><b>${t.name}</b></div><div class="row"><span>仓库 / 时效</span><b>${t.warehouse} / ${t.transit}</b></div><div class="row"><span>海运单价</span><b>$${cost.sea_rate_per_kg_usd.toFixed(2)}/kg</b></div><div class="row"><span>FBA 计费重</span><b>${p.shippingLb.toFixed(2)} lb</b></div><div class="row"><span>FBA 基础费 + 3.5%</span><b>${money(cost.fba.base_fee_usd)} + ${money(cost.fba.fuel_logistics_surcharge_usd)}</b></div></div>${cost.note?`<div class="notice bad">${cost.note}</div>`:''}${warnings.length?`<div class="notice"><b>尺寸优化建议</b><ul>${warnings.map(w=>`<li>${w}</li>`).join('')}</ul></div>`:'<div class="notice good">当前未触发 18in、50lb、130in 围长或 96in 的尺寸临界预警。</div>'}</div>`}
+function metric(key,label,value,total=''){return `<button type="button" class="metric ${total}" data-explain="${key}" aria-haspopup="dialog"><div class="label">${label}</div><div class="value">${value}</div></button>`}
+function row(label,value){return `<div class="row"><span>${label}</span><b>${value}</b></div>`}
+function explanation(title,formula,variables,summary){return `<h4>公式</h4><p class="formula">${formula}</p><h4>费用变量</h4><div class="rows">${variables.map(([k,v])=>row(k,v)).join('')}</div><h4>计算结果</h4><p>${summary}</p>`}
+function buildExplanations(cost){const p=cost.product,t=cost.sea_template,seaUsesVolume=cost.sea_volumetric_weight_kg>cost.sea_actual_weight_kg;return {
+  sea:{title:'海运费如何计算',body:explanation('海运费如何计算','海运费 = max(实重, 体积重) × 海运单价',[
+    ['实重',`${cost.sea_actual_weight_kg.toFixed(2)} kg`],
+    ['体积重',`${cost.sea_volumetric_weight_kg.toFixed(2)} kg，按长 × 宽 × 高（cm）÷ ${cost.sea_volume_divisor_cm3_per_kg}`],
+    ['计费重',`${cost.sea_chargeable_weight_kg.toFixed(2)} kg，取${seaUsesVolume?'体积重':'实重'}`],
+    ['模板',`${t.name}，${t.warehouse}，${t.transit}`],
+    ['单价',`$${cost.sea_rate_per_kg_usd.toFixed(2)}/kg`]
+  ],`${cost.sea_chargeable_weight_kg.toFixed(2)} kg × $${cost.sea_rate_per_kg_usd.toFixed(2)}/kg = ${money(cost.sea_freight_usd)}`)},
+  placement:{title:'配置费如何计算',body:explanation('配置费如何计算','配置费 = 当前入库方案对应的每件配置费',[
+    ['入库方案',$('placement').selectedOptions[0].textContent],
+    ['商品尺寸等级',p.tier],
+    ['FBA 计费重',`${p.shippingLb.toFixed(2)} lb`],
+    ['配置费',money(cost.placement_fee_usd)]
+  ],`系统按所选入库方案和当前尺寸/重量档位返回配置费：${money(cost.placement_fee_usd)}。`)},
+  fba:{title:'FBA 配送费如何计算',body:explanation('FBA 配送费如何计算','FBA 配送费 = 基础配送费 + 燃油和物流相关附加费',[
+    ['尺寸等级',p.tier],
+    ['商品尺寸',`${p.length.toFixed(2)} × ${p.width.toFixed(2)} × ${p.height.toFixed(2)} in`],
+    ['围长',`${p.girth.toFixed(2)} in`],
+    ['商品重量',`${p.actualLb.toFixed(2)} lb`],
+    ['体积重量',`${p.dimensionalLb.toFixed(2)} lb`],
+    ['FBA 计费重',`${p.shippingLb.toFixed(2)} lb`],
+    ['基础配送费',money(cost.fba.base_fee_usd)],
+    ['燃油和物流附加费',`${money(cost.fba.fuel_logistics_surcharge_usd)}（基础费 × 3.5%）`],
+    ['取整规则',cost.fba.rounding_rule]
+  ],`${money(cost.fba.base_fee_usd)} + ${money(cost.fba.fuel_logistics_surcharge_usd)} = ${money(cost.fba.total_fba_fee_usd)}`)},
+  total:{title:'三项合计如何计算',body:explanation('三项合计如何计算','三项合计 = 海运费 + 配置费 + FBA 配送费',[
+    ['海运费',money(cost.sea_freight_usd)],
+    ['配置费',money(cost.placement_fee_usd)],
+    ['FBA 配送费',money(cost.fba.total_fba_fee_usd)]
+  ],`${money(cost.sea_freight_usd)} + ${money(cost.placement_fee_usd)} + ${money(cost.fba.total_fba_fee_usd)} = ${money(cost.total_usd)}`)}
+}}
+function render(cost,optimization){const p=cost.product,t=cost.sea_template,seaUsesVolume=cost.sea_volumetric_weight_kg>cost.sea_actual_weight_kg;const warnings=optimization.warnings||[];explanations=buildExplanations(cost);$('output').innerHTML=`<div class="result">${metric('sea','海运费',money(cost.sea_freight_usd))}${metric('placement','配置费',money(cost.placement_fee_usd))}${metric('fba','FBA 配送费',money(cost.fba.total_fba_fee_usd))}${metric('total','三项合计',money(cost.total_usd),'total')}</div><div class="detail"><span class="tier">${p.tier}</span><div class="rows"><div class="row"><span>实重</span><b>${cost.sea_actual_weight_kg.toFixed(2)} kg</b></div><div class="row"><span>体积重</span><b>${cost.sea_volumetric_weight_kg.toFixed(2)} kg</b></div><div class="row"><span>海运计费重</span><b>${cost.sea_chargeable_weight_kg.toFixed(2)} kg（${seaUsesVolume?'体积重':'实重'}）</b></div><div class="row"><span>体积重除数</span><b>${cost.sea_volume_divisor_cm3_per_kg} cm³/kg</b></div><div class="row"><span>海运模板</span><b>${t.name}</b></div><div class="row"><span>仓库 / 时效</span><b>${t.warehouse} / ${t.transit}</b></div><div class="row"><span>海运单价</span><b>$${cost.sea_rate_per_kg_usd.toFixed(2)}/kg</b></div><div class="row"><span>FBA 计费重</span><b>${p.shippingLb.toFixed(2)} lb</b></div><div class="row"><span>FBA 基础费 + 3.5%</span><b>${money(cost.fba.base_fee_usd)} + ${money(cost.fba.fuel_logistics_surcharge_usd)}</b></div></div>${cost.note?`<div class="notice bad">${cost.note}</div>`:''}${warnings.length?`<div class="notice"><b>尺寸优化建议</b><ul>${warnings.map(w=>`<li>${w}</li>`).join('')}</ul></div>`:'<div class="notice good">当前未触发 18in、50lb、130in 围长或 96in 的尺寸临界预警。</div>'}</div>`}
+function openExplain(key){const item=explanations[key];if(!item)return;$('explainTitle').textContent=item.title;$('explainBody').innerHTML=item.body;$('explainModal').hidden=false}
+function closeExplain(){$('explainModal').hidden=true}
 async function run(){const button=$('calc');button.disabled=true;button.textContent='计算中…';try{const input=args(),[cost,optimization]=await Promise.all([invoke('calculate_fba_cost',input),invoke('optimize_fba_dimensions',input)]);render(cost,optimization)}catch(error){$('output').innerHTML=`<div class="notice bad">${error.message}</div>`}finally{button.disabled=false;button.textContent='计算费用并优化尺寸'}}
 $('calc').onclick=run;run();
+$('output').addEventListener('click',event=>{const target=event.target.closest('[data-explain]');if(target)openExplain(target.dataset.explain)});
+$('explainClose').onclick=closeExplain;
+$('explainModal').addEventListener('click',event=>{if(event.target.id==='explainModal')closeExplain()});
+document.addEventListener('keydown',event=>{if(event.key==='Escape')closeExplain()});
 </script>
 </body>
 </html>
