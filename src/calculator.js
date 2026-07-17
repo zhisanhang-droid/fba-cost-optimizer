@@ -1,5 +1,14 @@
 const USD = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 const ceilTo = (value, increment) => Math.ceil(value / increment) * increment;
+const LB_PER_KG = 2.20462262;
+const SEA_VOLUME_DIVISOR_CM3_PER_KG = 6000;
+
+export const SEA_FREIGHT_TEMPLATES = [
+  { id: "202607-lianyu-express", name: "202607-联宇-快船", warehouse: "GEU2", rate_per_kg_usd: 1.42, transit: "开船约18天签收", carrier: "快船" },
+  { id: "202607-lianyu-oa", name: "202607-联宇-OA船司", warehouse: "GEU2", rate_per_kg_usd: 1.33, transit: "开船约22天签收", carrier: "OA船司" }
+];
+
+export const DEFAULT_SEA_FREIGHT_TEMPLATE_ID = "202607-lianyu-express";
 
 export function normalizeInput(input) {
   let dimensions = [input.length, input.width, input.height].map(Number);
@@ -7,9 +16,9 @@ export function normalizeInput(input) {
   let weightLb = Number(input.weight);
   if (!Number.isFinite(weightLb) || weightLb <= 0) throw new Error("重量必须大于 0。");
   if (input.dimension_unit === "cm") dimensions = dimensions.map((n) => n / 2.54);
-  if (input.weight_unit === "kg") weightLb *= 2.20462262;
+  if (input.weight_unit === "kg") weightLb *= LB_PER_KG;
   dimensions.sort((a, b) => b - a);
-  return { length: dimensions[0], width: dimensions[1], height: dimensions[2], actualLb: weightLb };
+  return { length: dimensions[0], width: dimensions[1], height: dimensions[2], actualLb: weightLb, actualKg: weightLb / LB_PER_KG };
 }
 
 export function classifyProduct(input) {
@@ -83,12 +92,17 @@ export function calculateCost(input) {
   const product = classifyProduct(input);
   const fba = calculateFbaFee(product, input);
   const placement = calculatePlacementFee(product, input.placement ?? "single");
-  const seaRate = Number(input.sea_rate_per_kg ?? 1.5);
+  const templateId = input.sea_freight_template_id ?? DEFAULT_SEA_FREIGHT_TEMPLATE_ID;
+  const seaTemplate = SEA_FREIGHT_TEMPLATES.find((template) => template.id === templateId);
+  if (!seaTemplate && input.sea_freight_template_id) throw new Error("未找到指定的海运模板");
+  const seaRate = Number(input.sea_rate_per_kg ?? seaTemplate?.rate_per_kg_usd);
   if (!Number.isFinite(seaRate) || seaRate <= 0) throw new Error("海运单价必须大于 0");
-  const sea = product.actualLb / 2.20462262 * seaRate;
+  const seaVolumetricWeightKg = product.length * 2.54 * product.width * 2.54 * product.height * 2.54 / SEA_VOLUME_DIVISOR_CM3_PER_KG;
+  const seaChargeableWeightKg = Math.max(product.actualKg, seaVolumetricWeightKg);
+  const sea = seaChargeableWeightKg * seaRate;
   const incomplete = placement === null || product.specialOversize;
   const notes = [placement === null ? "超大件配置费未包含：原始规则表未列出该区间费率。" : null, fba.note].filter(Boolean);
-  return { product: { ...product, actualLb: USD(product.actualLb), dimensionalLb: product.dimensionalLb === null ? null : USD(product.dimensionalLb), shippingLb: USD(product.shippingLb), girth: USD(product.girth) }, sea_rate_per_kg_usd: USD(seaRate), sea_freight_usd: USD(sea), placement_fee_usd: placement === null ? null : USD(placement), fba, total_usd: incomplete ? null : USD(sea + placement + fba.total_fba_fee_usd), note: notes.length ? notes.join("；") : null };
+  return { product: { ...product, actualLb: USD(product.actualLb), actualKg: USD(product.actualKg), dimensionalLb: product.dimensionalLb === null ? null : USD(product.dimensionalLb), shippingLb: USD(product.shippingLb), girth: USD(product.girth) }, sea_template: seaTemplate ?? null, sea_rate_per_kg_usd: USD(seaRate), sea_actual_weight_kg: USD(product.actualKg), sea_volumetric_weight_kg: USD(seaVolumetricWeightKg), sea_chargeable_weight_kg: USD(seaChargeableWeightKg), sea_volume_divisor_cm3_per_kg: SEA_VOLUME_DIVISOR_CM3_PER_KG, sea_freight_usd: USD(sea), placement_fee_usd: placement === null ? null : USD(placement), fba, total_usd: incomplete ? null : USD(sea + placement + fba.total_fba_fee_usd), note: notes.length ? notes.join("；") : null };
 }
 
 export function optimizeDimensions(input) {

@@ -26,6 +26,19 @@ test("sea freight rate is an external input", () => {
   assert.equal(result.sea_rate_per_kg_usd, 1.47);
   assert.equal(result.sea_freight_usd, 0.13);
 });
+test("sea freight uses the higher of actual and volumetric weight", () => {
+  const result = calculateCost({ length: 60.5, width: 40.8, height: 58.5, dimension_unit: "cm", weight: 10.85, weight_unit: "kg" });
+  assert.equal(result.sea_template.id, "202607-lianyu-express");
+  assert.equal(result.sea_actual_weight_kg, 10.85);
+  assert.equal(result.sea_volumetric_weight_kg, 24.07);
+  assert.equal(result.sea_chargeable_weight_kg, 24.07);
+  assert.equal(result.sea_freight_usd, 34.17);
+});
+test("sea freight template can be selected", () => {
+  const result = calculateCost({ length: 10, width: 10, height: 10, weight: 5, weight_unit: "kg", sea_freight_template_id: "202607-lianyu-oa" });
+  assert.equal(result.sea_template.name, "202607-联宇-OA船司");
+  assert.equal(result.sea_rate_per_kg_usd, 1.33);
+});
 test("large oversize split placement uses the 42 to 50 lb rule", () => {
   const item = classifyProduct({ length: 59, width: 10, height: 10, weight: 45 });
   const result = calculateCost({ length: 59, width: 10, height: 10, weight: 45, placement: "split" });
